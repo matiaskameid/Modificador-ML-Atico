@@ -825,7 +825,7 @@ with tab2:
                 col_ok, col_cancel = st.columns(2)
                 with col_ok:
                     if st.button("Confirmar actualización MASIVA", type="primary", use_container_width=True):
-                        ok, fail, errors = 0, 0
+                        ok, fail, errors = 0, 0, []
                         succeeded_ids = []
                         for upd in bp["updates"]:
                             try:
