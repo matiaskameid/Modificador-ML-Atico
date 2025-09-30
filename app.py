@@ -13,6 +13,9 @@ import streamlit as st
 import subprocess, os
 from datetime import datetime
 
+import subprocess, os
+from datetime import datetime
+
 def git_sync(paths, message):
     g = st.secrets.get("git")
     if not g:
@@ -22,10 +25,10 @@ def git_sync(paths, message):
     repo_url = g["repo_url"]
     branch   = g.get("branch", "main")
     token    = g.get("token")
-    user     = g.get("user_name")    # opcional
-    email    = g.get("user_email")   # opcional
+    user     = g.get("user_name", "ML Bot")  # default
+    email    = g.get("user_email", "ml-bot@example.com")  # default
 
-    # Construye URL con token para el push (sin imprimir el token)
+    # URL con token para push (no imprime token)
     push_url = repo_url
     if token and repo_url.startswith("https://"):
         push_url = repo_url.replace("https://", f"https://{token}@")
@@ -36,38 +39,53 @@ def git_sync(paths, message):
             raise RuntimeError(r.stderr or r.stdout)
 
     try:
-        # Identidad opcional
-        if user:
-            run(["git","config","user.name", user])
-        if email:
-            run(["git","config","user.email", email])
+        # 1) Marcar dir como seguro (Git en contenedores a veces lo exige)
+        try:
+            run(["git","config","--global","--add","safe.directory", os.getcwd()])
+        except Exception:
+            pass
 
-        # Asegurar rama
+        # 2) Identidad para commits (por si no hay global)
+        run(["git","config","user.name", user])
+        run(["git","config","user.email", email])
+
+        # 3) Asegurar rama de trabajo (evitar detached HEAD)
         try:
             run(["git","rev-parse","--verify", branch])
             run(["git","checkout", branch])
         except Exception:
             run(["git","checkout","-b", branch])
 
-        # Añadir archivos y commitear (si no hay cambios, lo tratamos como ok)
-        run(["git","add", *paths])
+        # 4) Asegurar remoto “origin” (no es obligatorio, pero ayuda con pull)
+        try:
+            run(["git","remote","get-url","origin"])
+        except Exception:
+            # si no existe, lo creamos sin token (pull por origin puede fallar y lo ignoramos)
+            run(["git","remote","add","origin", repo_url])
+
+        # 5) Añadir archivos (forzar por si estuvieron ignorados)
+        run(["git","add","-f", *paths])
+
+        # 6) Commit (si no hay cambios, tratamos como OK y aún intentamos push)
+        committed = True
         try:
             run(["git","commit","-m", message])
         except Exception:
-            return True  # nada que commitear
+            committed = False  # nothing to commit
 
-        # Rebase por si hay cambios remotos
+        # 7) Pull rebase ‘best-effort’
         try:
             run(["git","pull","--rebase","origin", branch])
         except Exception:
-            pass
+            pass  # ok si repo inicial o sin permisos de lectura por origin
 
-        # Push
+        # 8) Push usando la URL con token (independiente de “origin”)
         run(["git","push", push_url, f"HEAD:{branch}"])
         return True
     except Exception as e:
         st.error(f"Sync a GitHub falló: {e}")
         return False
+
 
 
 
