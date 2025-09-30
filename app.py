@@ -769,7 +769,7 @@ with tab2:
                 },
             )
 
-            if st.button("Aplicar cambios a la selección", type="secondary", use_container_width=True):
+            if st.button("Cambiar seleccionados", type="secondary", use_container_width=True):
                 keep_mask = edited["✓"].astype(bool).tolist()
                 keep_ids = {base_ids[i] for i, keep in enumerate(keep_mask) if keep}
                 to_remove = set(base_ids) - keep_ids
