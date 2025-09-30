@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "updated_at": "2025-09-29T19:12:37.291670+00:00",
+  "rules": [
+    {
+      "min": 0,
+      "max": 9900,
+      "percent": 17.0,
+      "fixed": 588
+    },
+    {
+      "min": 9900,
+      "max": 19990,
+      "percent": 17.0,
+      "fixed": 840
+    },
+    {
+      "min": 19990,
+      "max": null,
+      "percent": 17.0,
+      "fixed": 2227
+    }
+  ]
+}
