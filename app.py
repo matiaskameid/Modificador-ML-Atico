@@ -450,8 +450,8 @@ with tab4:
                 doc = {"schema_version": 1, "updated_at": None, "rules": rules_list}
                 save_fees_rules(FEES_RULES_PATH, doc)
                 st.session_state.fees_rules = load_fees_rules(FEES_RULES_PATH)
-                git_sync([FEES_RULES_PATH], f"chore(fees): update {datetime.now().isoformat(timespec='seconds')}")
-                st.success(f"Guardado en {FEES_RULES_PATH}.")
+                ok = git_sync([FEES_RULES_PATH], "chore(fees): update")
+                st.success("Fees guardados y subidos a GitHub.") if ok else st.error("No se pudo subir a GitHub.")
 
     with c3:
         rules_for_download = _coerce_rules(rules_df_display)
@@ -514,8 +514,8 @@ with tab3:
             snap2 = rebuild_snapshot_from_ml(progress_cb=cb2)
             save_snapshot_to_disk(SNAPSHOT_PATH, snap2)
             st.session_state.snapshot = snap2
-            git_sync([SNAPSHOT_PATH], f"chore(snapshot): update {datetime.now().isoformat(timespec='seconds')}")
-            status_placeholder.success(f"Snapshot reconstruido ({snap2['meta']['total_items']} SKUs). Guardado en {SNAPSHOT_PATH}.")
+            ok = git_sync([SNAPSHOT_PATH], "chore(snapshot): update")
+            st.success("Snapshot guardado y subido a GitHub.") if ok else st.error("No se pudo subir a GitHub.")
             progress_bar.progress(1.0)
         except Exception as e:
             progress_bar.empty()
