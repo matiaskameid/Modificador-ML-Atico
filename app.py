@@ -9,6 +9,68 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 
+# ——— añadir cerca de los imports ———
+import subprocess, os
+from datetime import datetime
+
+def git_sync(paths, message):
+    g = st.secrets.get("git")
+    if not g:
+        st.error("No hay configuración [git] en secrets.toml")
+        return False
+
+    repo_url = g["repo_url"]
+    branch   = g.get("branch", "main")
+    token    = g.get("token")
+    user     = g.get("user_name")    # opcional
+    email    = g.get("user_email")   # opcional
+
+    # Construye URL con token para el push (sin imprimir el token)
+    push_url = repo_url
+    if token and repo_url.startswith("https://"):
+        push_url = repo_url.replace("https://", f"https://{token}@")
+
+    def run(cmd):
+        r = subprocess.run(cmd, capture_output=True, text=True, shell=False)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr or r.stdout)
+
+    try:
+        # Identidad opcional
+        if user:
+            run(["git","config","user.name", user])
+        if email:
+            run(["git","config","user.email", email])
+
+        # Asegurar rama
+        try:
+            run(["git","rev-parse","--verify", branch])
+            run(["git","checkout", branch])
+        except Exception:
+            run(["git","checkout","-b", branch])
+
+        # Añadir archivos y commitear (si no hay cambios, lo tratamos como ok)
+        run(["git","add", *paths])
+        try:
+            run(["git","commit","-m", message])
+        except Exception:
+            return True  # nada que commitear
+
+        # Rebase por si hay cambios remotos
+        try:
+            run(["git","pull","--rebase","origin", branch])
+        except Exception:
+            pass
+
+        # Push
+        run(["git","push", push_url, f"HEAD:{branch}"])
+        return True
+    except Exception as e:
+        st.error(f"Sync a GitHub falló: {e}")
+        return False
+
+
+
 from ml_client import MercadoLibreClient
 
 st.set_page_config(page_title="ML · Márgenes y Precios", page_icon="🛒", layout="wide")
@@ -388,7 +450,9 @@ with tab4:
                 doc = {"schema_version": 1, "updated_at": None, "rules": rules_list}
                 save_fees_rules(FEES_RULES_PATH, doc)
                 st.session_state.fees_rules = load_fees_rules(FEES_RULES_PATH)
+                git_sync([FEES_RULES_PATH], f"chore(fees): update {datetime.now().isoformat(timespec='seconds')}")
                 st.success(f"Guardado en {FEES_RULES_PATH}.")
+
     with c3:
         rules_for_download = _coerce_rules(rules_df_display)
         st.download_button(
@@ -450,6 +514,7 @@ with tab3:
             snap2 = rebuild_snapshot_from_ml(progress_cb=cb2)
             save_snapshot_to_disk(SNAPSHOT_PATH, snap2)
             st.session_state.snapshot = snap2
+            git_sync([SNAPSHOT_PATH], f"chore(snapshot): update {datetime.now().isoformat(timespec='seconds')}")
             status_placeholder.success(f"Snapshot reconstruido ({snap2['meta']['total_items']} SKUs). Guardado en {SNAPSHOT_PATH}.")
             progress_bar.progress(1.0)
         except Exception as e:
