@@ -75,121 +75,75 @@ def _run_git(cmd: str, cwd: Optional[str] = None) -> Tuple[int, str, str]:
     out, err = p.communicate()
     return p.returncode, (out or "").strip(), (err or "").strip()
 
-def git_sync(paths: List[str], message: str) -> Optional[str]:
-    """
-    Add/commit/pull --rebase/push de los archivos indicados.
-    - Si existe GIT_PAT, reescribe temporalmente el remote HTTPS a: https://<PAT>@github.com/owner/repo(.git)
-    - Control por env: GIT_SYNC(1/0), GIT_REMOTE, GIT_BRANCH, GIT_USER_NAME, GIT_USER_EMAIL, GIT_PAT
-    Devuelve el hash del commit si hubo commit; None si no hubo cambios o falló algo no crítico.
-    """
+def git_sync(paths, message):
+    g = st.secrets.get("git")
+    if not g:
+        st.error("No hay configuración [git] en secrets.toml")
+        return False
+
+    repo_url = g["repo_url"]
+    branch   = g.get("branch", "main")
+    token    = g.get("token")
+    user     = g.get("user_name", "ML Bot")  # default
+    email    = g.get("user_email", "ml-bot@example.com")  # default
+
+    # URL con token para push (no imprime token)
+    push_url = repo_url
+    if token and repo_url.startswith("https://"):
+        push_url = repo_url.replace("https://", f"https://{token}@")
+
+    def run(cmd):
+        r = subprocess.run(cmd, capture_output=True, text=True, shell=False)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr or r.stdout)
+
     try:
-        if os.getenv("GIT_SYNC", "1") != "1":
-            return None
-
-        rc, toplevel, err = _run_git("git rev-parse --show-toplevel")
-        if rc != 0:
-            # No es repo git o sin permisos
-            try:
-                import streamlit as st
-                st.warning(f"[git_sync] No es repo git o sin permisos: {err}")
-            except Exception:
-                pass
-            return None
-
-        repo = toplevel or "."
-        remote_name = os.getenv("GIT_REMOTE", "origin")
-
-        # Config de autor (evita fallas de commit en contenedores/CI)
-        user_name = os.getenv("GIT_USER_NAME", "ml-bot")
-        user_email = os.getenv("GIT_USER_EMAIL", "ml-bot@example.com")
-        _run_git(f'git config user.name "{user_name}"', cwd=repo)
-        _run_git(f'git config user.email "{user_email}"', cwd=repo)
-
-        # Stage
-        add_cmd = "git add " + " ".join(shlex.quote(p) for p in paths)
-        rc, _, err = _run_git(add_cmd, cwd=repo)
-        if rc != 0:
-            try:
-                import streamlit as st
-                st.warning(f"[git_sync] git add falló: {err}")
-            except Exception:
-                pass
-            return None
-
-        # ¿Hay cambios?
-        rc, status_out, _ = _run_git("git status --porcelain", cwd=repo)
-        if rc != 0 or not status_out.strip():
-            return None
-
-        # Filtrar si lo que cambió incluye al menos uno de los paths
-        changed = False
-        for line in status_out.splitlines():
-            if not line.strip():
-                continue
-            for pth in paths:
-                # Coincidencia simple por substring del path
-                if pth in line:
-                    changed = True
-                    break
-            if changed:
-                break
-        if not changed:
-            return None
-
-        # Commit
-        rc, _, err = _run_git(f'git commit -m "{message}"', cwd=repo)
-        if rc != 0:
-            try:
-                import streamlit as st
-                st.warning(f"[git_sync] git commit falló: {err}")
-            except Exception:
-                pass
-            return None
-
-        # Branch
-        branch = os.getenv("GIT_BRANCH")
-        if not branch:
-            rc, branch, _ = _run_git("git rev-parse --abbrev-ref HEAD", cwd=repo)
-            if rc != 0 or not branch:
-                branch = "main"
-
-        # === SOPORTE PAT: reescribir remote si es https y no trae user ===
-        pat = os.getenv("GIT_PAT")
-        original_url = None
-        if pat:
-            rc, current_url, _ = _run_git(f"git remote get-url {remote_name}", cwd=repo)
-            if rc == 0 and current_url.startswith("https://") and "@github.com" not in current_url:
-                # Guardar url original para restaurar si quieres (no es necesario en la mayoría de los PaaS)
-                original_url = current_url
-                # https://github.com/owner/repo(.git) -> https://<PAT>@github.com/owner/repo(.git)
-                token_url = current_url.replace("https://github.com/", f"https://{pat}@github.com/")
-                _run_git(f"git remote set-url {remote_name} {shlex.quote(token_url)}", cwd=repo)
-
-        # Pull --rebase (si falla, igual intentamos push; típicamente resuelve fast-forward)
-        _run_git(f"git pull --rebase {remote_name} {branch}", cwd=repo)
-
-        # Push
-        rc, _, err = _run_git(f"git push {remote_name} {branch}", cwd=repo)
-        if rc != 0:
-            try:
-                import streamlit as st
-                st.warning(f"[git_sync] git push falló: {err}")
-            except Exception:
-                pass
-            # No hacemos raise; igual devolvemos el commit hash si existe
-
-        # Hash del commit
-        rc, commit_hash, _ = _run_git("git rev-parse HEAD", cwd=repo)
-        return commit_hash if rc == 0 else None
-
-    except Exception as e:
+        # 1) Marcar dir como seguro (Git en contenedores a veces lo exige)
         try:
-            import streamlit as st
-            st.warning(f"[git_sync] Excepción: {e}")
+            run(["git","config","--global","--add","safe.directory", os.getcwd()])
         except Exception:
             pass
-        return None
 
+        # 2) Identidad para commits (por si no hay global)
+        run(["git","config","user.name", user])
+        run(["git","config","user.email", email])
+
+        # 3) Asegurar rama de trabajo (evitar detached HEAD)
+        try:
+            run(["git","rev-parse","--verify", branch])
+            run(["git","checkout", branch])
+        except Exception:
+            run(["git","checkout","-b", branch])
+
+        # 4) Asegurar remoto “origin” (no es obligatorio, pero ayuda con pull)
+        try:
+            run(["git","remote","get-url","origin"])
+        except Exception:
+            # si no existe, lo creamos sin token (pull por origin puede fallar y lo ignoramos)
+            run(["git","remote","add","origin", repo_url])
+
+        # 5) Añadir archivos (forzar por si estuvieron ignorados)
+        run(["git","add","-f", *paths])
+
+        # 6) Commit (si no hay cambios, tratamos como OK y aún intentamos push)
+        committed = True
+        try:
+            run(["git","commit","-m", message])
+        except Exception:
+            committed = False  # nothing to commit
+
+        # 7) Pull rebase ‘best-effort’
+        try:
+            run(["git","pull","--rebase","origin", branch])
+        except Exception:
+            pass  # ok si repo inicial o sin permisos de lectura por origin
+
+        # 8) Push usando la URL con token (independiente de “origin”)
+        run(["git","push", push_url, f"HEAD:{branch}"])
+        return True
+    except Exception as e:
+        st.error(f"Sync a GitHub falló: {e}")
+        return False
 # =========================
 
 # =========================
