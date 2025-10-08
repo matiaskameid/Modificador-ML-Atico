@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
+<<<<<<< HEAD
   "updated_at": "2025-10-01T23:34:20.689014+00:00",
+=======
+  "updated_at": "2025-10-08T21:10:06.411477+00:00",
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
   "rules": [
     {
       "min": 0,

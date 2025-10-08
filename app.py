@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 
+<<<<<<< HEAD
 # ——— añadir cerca de los imports ———
 import subprocess, os
 from datetime import datetime
@@ -89,6 +90,8 @@ def git_sync(paths, message):
 
 
 
+=======
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
 from ml_client import MercadoLibreClient
 
 st.set_page_config(page_title="ML · Márgenes y Precios", page_icon="🛒", layout="wide")
@@ -158,6 +161,43 @@ def fmt_pct(v: Optional[float]) -> str:
     return f"{float(v):.1f}%"
 
 # =========================
+<<<<<<< HEAD
+=======
+# Cache helpers (pesado)
+# =========================
+@st.cache_data(show_spinner=False)
+def read_excel_cached(file_bytes: bytes) -> pd.DataFrame:
+    # Lee Excel desde bytes para que cambie al subir un archivo distinto
+    from io import BytesIO
+    return pd.read_excel(BytesIO(file_bytes), dtype={"CODIGO SKU": str})
+
+@st.cache_data(show_spinner=False)
+def fetch_items_info_cached(ids_tuple: Tuple[str, ...], workers: int) -> Dict[str, Dict[str, Any]]:
+    """Consulta /items?ids=... en paralelo y cachea por conjunto ordenado de IDs + #workers."""
+    if not ids_tuple:
+        return {}
+    bulk = ml.get_items_bulk_parallel(list(ids_tuple), workers=workers)
+    out: Dict[str, Dict[str, Any]] = {}
+    for entry in bulk:
+        body = entry.get("body") or {}
+        iid = body.get("id")
+        if iid:
+            out[iid] = {"title": body.get("title"), "price": body.get("price")}
+    return out
+
+@st.cache_data(show_spinner=False)
+def build_no_ml_excel_bytes(rows: List[Tuple[str, str]]) -> bytes:
+    """Genera el Excel de 'no encontrados' y lo cachea por contenido (lista de filas)."""
+    import io
+    buf = io.BytesIO()
+    df = pd.DataFrame(rows, columns=["SKU", "PRODUCTO"])
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+        df.to_excel(w, index=False, sheet_name="No_en_ML")
+    buf.seek(0)
+    return buf.getvalue()
+
+# =========================
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
 # Snapshot SKU→ID
 # =========================
 def load_snapshot_from_disk(path: str) -> Optional[Dict[str, Any]]:
@@ -468,9 +508,13 @@ with tab4:
                 doc = {"schema_version": 1, "updated_at": None, "rules": rules_list}
                 save_fees_rules(FEES_RULES_PATH, doc)
                 st.session_state.fees_rules = load_fees_rules(FEES_RULES_PATH)
+<<<<<<< HEAD
                 ok = git_sync([FEES_RULES_PATH], "chore(fees): update")
                 st.success("Fees guardados y subidos a GitHub.") if ok else st.error("No se pudo subir a GitHub.")
 
+=======
+                st.success(f"Guardado en {FEES_RULES_PATH}.")
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
     with c3:
         rules_for_download = _coerce_rules(rules_df_display)
         st.download_button(
@@ -532,8 +576,12 @@ with tab3:
             snap2 = rebuild_snapshot_from_ml(progress_cb=cb2)
             save_snapshot_to_disk(SNAPSHOT_PATH, snap2)
             st.session_state.snapshot = snap2
+<<<<<<< HEAD
             ok = git_sync([SNAPSHOT_PATH], "chore(snapshot): update")
             st.success("Snapshot guardado y subido a GitHub.") if ok else st.error("No se pudo subir a GitHub.")
+=======
+            status_placeholder.success(f"Snapshot reconstruido ({snap2['meta']['total_items']} SKUs). Guardado en {SNAPSHOT_PATH}.")
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
             progress_bar.progress(1.0)
         except Exception as e:
             progress_bar.empty()
@@ -558,8 +606,15 @@ with tab2:
     sku_filter = st.text_input("Filtrar por SKU (contiene)", value="", key="skufilter_mass")
 
     if up_xlsx is not None:
+<<<<<<< HEAD
         try:
             df_raw = pd.read_excel(up_xlsx, dtype={"CODIGO SKU": str})
+=======
+        # ---------- lectura Excel (cacheada por bytes) ----------
+        try:
+            file_bytes = up_xlsx.getvalue()
+            df_raw = read_excel_cached(file_bytes)
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
         except Exception as e:
             st.error("No se pudo leer el Excel. Verifica el formato y nombres de columnas.")
             st.exception(e)
@@ -593,6 +648,7 @@ with tab2:
 
         work = df[df["item_id"].notna()].copy()
         item_ids = work["item_id"].tolist()
+<<<<<<< HEAD
 
         st.caption(f"Consultando precios en ML: {len(set(item_ids)):,} ítems · lotes de {BULK_SIZE} · {BULK_WORKERS} workers")
 
@@ -613,6 +669,15 @@ with tab2:
             return info
 
         info_map = fetch_items_info(item_ids)
+=======
+        uniq_ids = tuple(sorted(set(item_ids)))
+
+        st.caption(f"Consultando precios en ML (cacheado por conjunto de IDs): {len(uniq_ids):,} ítems · lotes de {BULK_SIZE} · {BULK_WORKERS} workers")
+
+        # ---------- consulta ML (cacheada por tupla de IDs) ----------
+        info_map = fetch_items_info_cached(uniq_ids, workers=BULK_WORKERS)
+
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
         work["price_actual"] = work["item_id"].map(lambda x: info_map.get(x, {}).get("price"))
         work["titulo"] = work["item_id"].map(lambda x: info_map.get(x, {}).get("title", ""))
 
@@ -787,7 +852,11 @@ with tab2:
                 },
             )
 
+<<<<<<< HEAD
             if st.button("Cambiar seleccionados", type="secondary", use_container_width=True):
+=======
+            if st.button("Aplicar cambios a la selección", type="secondary", use_container_width=True):
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
                 keep_mask = edited["✓"].astype(bool).tolist()
                 keep_ids = {base_ids[i] for i, keep in enumerate(keep_mask) if keep}
                 to_remove = set(base_ids) - keep_ids
@@ -852,7 +921,11 @@ with tab2:
                                 succeeded_ids.append(upd["item_id"])
                             except Exception as e:
                                 fail += 1
+<<<<<<< HEAD
                                 (errors := errors or []).append({**upd, "error": str(e)})
+=======
+                                errors.append({**upd, "error": str(e)})
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
                         st.success(f"Listo: {ok} OK, {fail} fallos.")
                         if errors:
                             st.error("Algunos ítems fallaron:")
@@ -866,11 +939,29 @@ with tab2:
                     if st.button("Cancelar plan", use_container_width=True):
                         st.session_state.bulk_plan = None
 
+<<<<<<< HEAD
+=======
+        # ---------- No encontrados (tabla + Excel cacheado) ----------
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
         st.divider()
         with st.expander(f"No están en ML (según snapshot) — {int(df['item_id'].isna().sum())}", expanded=False):
             no_ml = df[df["item_id"].isna()][["CODIGO SKU", "PRODUCTO"]].rename(columns={"CODIGO SKU":"SKU"})
             st.dataframe(no_ml, use_container_width=True, hide_index=True)
 
+<<<<<<< HEAD
+=======
+            # Generar Excel cacheado por contenido (lista de tuplas)
+            rows = list(no_ml[["SKU", "PRODUCTO"]].itertuples(index=False, name=None))
+            xlsx_bytes = build_no_ml_excel_bytes(rows)
+            st.download_button(
+                label="⬇️ Descargar como Excel los No Encontrados",
+                data=xlsx_bytes,
+                file_name="no_encontrados_ml.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
 # ---------- TAB 1: Buscar (SKU/Título) ----------
 with tab1:
     st.subheader("Buscar por SKU o Título (usa el Excel cargado)")
@@ -909,6 +1000,7 @@ with tab1:
                     st.stop()
 
                 ids = in_ml["item_id"].tolist()
+<<<<<<< HEAD
                 st.caption(f"Consultando {len(set(ids))} ítems en ML…")
 
                 def fetch_items_info(iids: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -928,6 +1020,14 @@ with tab1:
                     return info
 
                 info_map = fetch_items_info(ids)
+=======
+                uniq_ids_s = tuple(sorted(set(ids)))
+                st.caption(f"Consultando {len(uniq_ids_s)} ítems en ML… (cacheado por IDs)")
+
+                # ---------- consulta ML (cacheada) ----------
+                info_map = fetch_items_info_cached(uniq_ids_s, workers=BULK_WORKERS)
+
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
                 in_ml["price_actual"] = in_ml["item_id"].map(lambda x: info_map.get(x, {}).get("price"))
                 in_ml["titulo_ml"] = in_ml["item_id"].map(lambda x: info_map.get(x, {}).get("title", ""))
 
@@ -1067,7 +1167,11 @@ with tab1:
                 cu = st.session_state.confirm_update
                 if cu and cu.get("context") == "search":
                     msg = f"{cu['nota']} — Vas a cambiar {cu['item_id']} ({cu['sku']}) de {fmt_money(cu['old_price'])} a {fmt_money(cu['new_price'])}. Confirma para aplicar."
+<<<<<<< HEAD
                     st.code(msg, language=None)   # fondo gris, monoespaciado, no colapsa espacios
+=======
+                    st.code(msg, language=None)   # texto plano sin colapsar espacios
+>>>>>>> 254480d (feat: cacheos y mejoras de fluidez en app.py)
                     d1, d2 = st.columns(2)
                     with d1:
                         if st.button("Confirmar cambio", type="primary"):
