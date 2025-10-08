@@ -61,11 +61,26 @@ def _run_git(cmd: str, cwd: Optional[str] = None) -> Tuple[int, str, str]:
     out, err = p.communicate()
     return p.returncode, out.strip(), err.strip()
 
+import subprocess, shlex, os
+from typing import List, Optional, Tuple
+
+def _run_git(cmd: str, cwd: Optional[str] = None) -> Tuple[int, str, str]:
+    p = subprocess.Popen(
+        shlex.split(cmd),
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    out, err = p.communicate()
+    return p.returncode, (out or "").strip(), (err or "").strip()
+
 def git_sync(paths: List[str], message: str) -> Optional[str]:
     """
-    Hace add/commit/pull --rebase/push de los archivos indicados.
-    Controlado por env: GIT_SYNC (1/0), GIT_REMOTE, GIT_BRANCH, GIT_USER_NAME, GIT_USER_EMAIL.
-    Retorna el hash del commit si hubo commit, o None si no hubo cambios.
+    Add/commit/pull --rebase/push de los archivos indicados.
+    - Si existe GIT_PAT, reescribe temporalmente el remote HTTPS a: https://<PAT>@github.com/owner/repo(.git)
+    - Control por env: GIT_SYNC(1/0), GIT_REMOTE, GIT_BRANCH, GIT_USER_NAME, GIT_USER_EMAIL, GIT_PAT
+    Devuelve el hash del commit si hubo commit; None si no hubo cambios o falló algo no crítico.
     """
     try:
         if os.getenv("GIT_SYNC", "1") != "1":
@@ -73,37 +88,47 @@ def git_sync(paths: List[str], message: str) -> Optional[str]:
 
         rc, toplevel, err = _run_git("git rev-parse --show-toplevel")
         if rc != 0:
-            st.warning(f"[git_sync] No es un repo git o sin permisos: {err}")
+            # No es repo git o sin permisos
+            try:
+                import streamlit as st
+                st.warning(f"[git_sync] No es repo git o sin permisos: {err}")
+            except Exception:
+                pass
             return None
 
         repo = toplevel or "."
-        # Asegurar configuración básica de usuario para el commit
+        remote_name = os.getenv("GIT_REMOTE", "origin")
+
+        # Config de autor (evita fallas de commit en contenedores/CI)
         user_name = os.getenv("GIT_USER_NAME", "ml-bot")
         user_email = os.getenv("GIT_USER_EMAIL", "ml-bot@example.com")
         _run_git(f'git config user.name "{user_name}"', cwd=repo)
         _run_git(f'git config user.email "{user_email}"', cwd=repo)
 
-        # Agregar archivos
+        # Stage
         add_cmd = "git add " + " ".join(shlex.quote(p) for p in paths)
-        rc, out, err = _run_git(add_cmd, cwd=repo)
+        rc, _, err = _run_git(add_cmd, cwd=repo)
         if rc != 0:
-            st.warning(f"[git_sync] git add falló: {err}")
+            try:
+                import streamlit as st
+                st.warning(f"[git_sync] git add falló: {err}")
+            except Exception:
+                pass
             return None
 
-        # ¿Hay cambios staged o pendientes?
+        # ¿Hay cambios?
         rc, status_out, _ = _run_git("git status --porcelain", cwd=repo)
-        if rc != 0:
-            st.warning("[git_sync] No se pudo obtener git status.")
+        if rc != 0 or not status_out.strip():
             return None
-        # Filtrar por los paths dados (si nada cambió, no comitear)
+
+        # Filtrar si lo que cambió incluye al menos uno de los paths
         changed = False
         for line in status_out.splitlines():
             if not line.strip():
                 continue
-            # linea tipo 'M  path' o 'A  path' etc.
-            for p in paths:
-                # coincidencia simple por nombre de archivo
-                if p in line:
+            for pth in paths:
+                # Coincidencia simple por substring del path
+                if pth in line:
                     changed = True
                     break
             if changed:
@@ -114,33 +139,57 @@ def git_sync(paths: List[str], message: str) -> Optional[str]:
         # Commit
         rc, _, err = _run_git(f'git commit -m "{message}"', cwd=repo)
         if rc != 0:
-            st.warning(f"[git_sync] git commit falló: {err}")
+            try:
+                import streamlit as st
+                st.warning(f"[git_sync] git commit falló: {err}")
+            except Exception:
+                pass
             return None
 
-        # Descubrir branch actual si no viene por env
+        # Branch
         branch = os.getenv("GIT_BRANCH")
         if not branch:
             rc, branch, _ = _run_git("git rev-parse --abbrev-ref HEAD", cwd=repo)
             if rc != 0 or not branch:
                 branch = "main"
 
-        remote = os.getenv("GIT_REMOTE", "origin")
+        # === SOPORTE PAT: reescribir remote si es https y no trae user ===
+        pat = os.getenv("GIT_PAT")
+        original_url = None
+        if pat:
+            rc, current_url, _ = _run_git(f"git remote get-url {remote_name}", cwd=repo)
+            if rc == 0 and current_url.startswith("https://") and "@github.com" not in current_url:
+                # Guardar url original para restaurar si quieres (no es necesario en la mayoría de los PaaS)
+                original_url = current_url
+                # https://github.com/owner/repo(.git) -> https://<PAT>@github.com/owner/repo(.git)
+                token_url = current_url.replace("https://github.com/", f"https://{pat}@github.com/")
+                _run_git(f"git remote set-url {remote_name} {shlex.quote(token_url)}", cwd=repo)
 
-        # Pull --rebase para evitar rechazos simples
-        _run_git(f"git pull --rebase {remote} {branch}", cwd=repo)
+        # Pull --rebase (si falla, igual intentamos push; típicamente resuelve fast-forward)
+        _run_git(f"git pull --rebase {remote_name} {branch}", cwd=repo)
 
         # Push
-        rc, _, err = _run_git(f"git push {remote} {branch}", cwd=repo)
+        rc, _, err = _run_git(f"git push {remote_name} {branch}", cwd=repo)
         if rc != 0:
-            st.warning(f"[git_sync] git push falló: {err}")
+            try:
+                import streamlit as st
+                st.warning(f"[git_sync] git push falló: {err}")
+            except Exception:
+                pass
+            # No hacemos raise; igual devolvemos el commit hash si existe
 
-        # Devolver hash del commit
+        # Hash del commit
         rc, commit_hash, _ = _run_git("git rev-parse HEAD", cwd=repo)
         return commit_hash if rc == 0 else None
 
     except Exception as e:
-        st.warning(f"[git_sync] Excepción: {e}")
+        try:
+            import streamlit as st
+            st.warning(f"[git_sync] Excepción: {e}")
+        except Exception:
+            pass
         return None
+
 # =========================
 
 # =========================
