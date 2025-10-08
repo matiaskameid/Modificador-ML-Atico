@@ -11,6 +11,11 @@ import streamlit as st
 
 from ml_client import MercadoLibreClient
 
+# ==== NUEVO: para git_sync ====
+import subprocess
+import shlex
+# ==============================
+
 st.set_page_config(page_title="ML · Márgenes y Precios", page_icon="🛒", layout="wide")
 
 # =========================
@@ -44,6 +49,99 @@ ml = MercadoLibreClient(
     rpm_ceiling=RPM_CEILING,
     bulk_size=BULK_SIZE,
 )
+
+# =========================
+# NUEVO: utilidades Git
+# =========================
+def _run_git(cmd: str, cwd: Optional[str] = None) -> Tuple[int, str, str]:
+    """Ejecuta un comando git y retorna (rc, out, err)."""
+    p = subprocess.Popen(
+        shlex.split(cmd), cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    out, err = p.communicate()
+    return p.returncode, out.strip(), err.strip()
+
+def git_sync(paths: List[str], message: str) -> Optional[str]:
+    """
+    Hace add/commit/pull --rebase/push de los archivos indicados.
+    Controlado por env: GIT_SYNC (1/0), GIT_REMOTE, GIT_BRANCH, GIT_USER_NAME, GIT_USER_EMAIL.
+    Retorna el hash del commit si hubo commit, o None si no hubo cambios.
+    """
+    try:
+        if os.getenv("GIT_SYNC", "1") != "1":
+            return None
+
+        rc, toplevel, err = _run_git("git rev-parse --show-toplevel")
+        if rc != 0:
+            st.warning(f"[git_sync] No es un repo git o sin permisos: {err}")
+            return None
+
+        repo = toplevel or "."
+        # Asegurar configuración básica de usuario para el commit
+        user_name = os.getenv("GIT_USER_NAME", "ml-bot")
+        user_email = os.getenv("GIT_USER_EMAIL", "ml-bot@example.com")
+        _run_git(f'git config user.name "{user_name}"', cwd=repo)
+        _run_git(f'git config user.email "{user_email}"', cwd=repo)
+
+        # Agregar archivos
+        add_cmd = "git add " + " ".join(shlex.quote(p) for p in paths)
+        rc, out, err = _run_git(add_cmd, cwd=repo)
+        if rc != 0:
+            st.warning(f"[git_sync] git add falló: {err}")
+            return None
+
+        # ¿Hay cambios staged o pendientes?
+        rc, status_out, _ = _run_git("git status --porcelain", cwd=repo)
+        if rc != 0:
+            st.warning("[git_sync] No se pudo obtener git status.")
+            return None
+        # Filtrar por los paths dados (si nada cambió, no comitear)
+        changed = False
+        for line in status_out.splitlines():
+            if not line.strip():
+                continue
+            # linea tipo 'M  path' o 'A  path' etc.
+            for p in paths:
+                # coincidencia simple por nombre de archivo
+                if p in line:
+                    changed = True
+                    break
+            if changed:
+                break
+        if not changed:
+            return None
+
+        # Commit
+        rc, _, err = _run_git(f'git commit -m "{message}"', cwd=repo)
+        if rc != 0:
+            st.warning(f"[git_sync] git commit falló: {err}")
+            return None
+
+        # Descubrir branch actual si no viene por env
+        branch = os.getenv("GIT_BRANCH")
+        if not branch:
+            rc, branch, _ = _run_git("git rev-parse --abbrev-ref HEAD", cwd=repo)
+            if rc != 0 or not branch:
+                branch = "main"
+
+        remote = os.getenv("GIT_REMOTE", "origin")
+
+        # Pull --rebase para evitar rechazos simples
+        _run_git(f"git pull --rebase {remote} {branch}", cwd=repo)
+
+        # Push
+        rc, _, err = _run_git(f"git push {remote} {branch}", cwd=repo)
+        if rc != 0:
+            st.warning(f"[git_sync] git push falló: {err}")
+
+        # Devolver hash del commit
+        rc, commit_hash, _ = _run_git("git rev-parse HEAD", cwd=repo)
+        return commit_hash if rc == 0 else None
+
+    except Exception as e:
+        st.warning(f"[git_sync] Excepción: {e}")
+        return None
+# =========================
 
 # =========================
 # Utilidades
@@ -139,6 +237,11 @@ def load_snapshot_from_disk(path: str) -> Optional[Dict[str, Any]]:
 def save_snapshot_to_disk(path: str, payload: Dict[str, Any]) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+    # ==== NUEVO: subir a Git ====
+    commit_msg = f"chore(snapshot): update {os.path.basename(path)} at {now_utc_iso()}"
+    commit_hash = git_sync([path], commit_msg)
+    if commit_hash:
+        st.caption(f"[git] Snapshot comiteado: {commit_hash[:7]}")
 
 def snapshot_is_fresh(generated_at_iso: str, max_age_days: int) -> bool:
     try:
@@ -207,6 +310,11 @@ def save_fees_rules(path: str, payload: Dict[str, Any]) -> None:
     payload["updated_at"] = now_utc_iso()
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+    # ==== NUEVO: subir a Git ====
+    commit_msg = f"feat(fees): update {os.path.basename(path)} at {payload['updated_at']}"
+    commit_hash = git_sync([path], commit_msg)
+    if commit_hash:
+        st.caption(f"[git] Fees comiteadas: {commit_hash[:7]}")
 
 def validate_fee_rules(rules: List[Dict[str, Any]]) -> Tuple[bool, str]:
     if not rules:
