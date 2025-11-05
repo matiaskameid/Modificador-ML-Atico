@@ -391,7 +391,11 @@ def fee_neto_desde_pvp(pvp_bruto: float, rules: List[Dict[str, Any]]) -> int:
     pn = float(pvp_bruto) / IVA_MULT
     perc = float(r["percent"]) / 100.0
     fijo_neto = int(r["fixed"])
-    return int(round(fijo_neto + perc * pn))
+    try:
+        return int(round(float(fijo_neto + perc * pn)))
+    except (TypeError, ValueError):
+        return np.nan
+
 
 def margen_pct_sobre_neto(pvp_bruto: float, costo_neto: float, rules: List[Dict[str, Any]]) -> float:
     c = float(costo_neto)
