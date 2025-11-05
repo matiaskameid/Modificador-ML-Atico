@@ -430,7 +430,14 @@ def solve_pvp_para_margen_neto(costo_neto: float, target_pct: float, rules: List
         else:
             pnet_req = (c + fijo) / denom
         candidate_pvp = ceil_to_10(pnet_req * IVA_MULT)
-    pvp = int(candidate_pvp)
+
+    # --- cambio mínimo para evitar ValueError al castear a int ---
+    try:
+        pvp = int(candidate_pvp)
+    except (TypeError, ValueError):
+        return np.nan  # propaga NaN si candidate_pvp no es convertible
+    # -------------------------------------------------------------
+
     for _ in range(2000):
         if margen_pct_sobre_neto(pvp, c, rules) + 1e-9 >= float(target_pct):
             return pvp
