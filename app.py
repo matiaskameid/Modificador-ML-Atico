@@ -178,8 +178,28 @@ def strip_accents_lower(text: Any) -> str:
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     return s.lower()
 
-def ceil_to_10(x: float) -> int:
-    return int(math.ceil(float(x) / 10.0) * 10.0)
+import math
+import numpy as np
+
+def ceil_to_10(x):
+    """
+    Redondea hacia arriba al múltiplo de 10 más cercano.
+    Evita ValueError cuando x es NaN/None/no numérico o infinito.
+    Devuelve np.nan si no se puede convertir a número o no es finito.
+    """
+    # Conversión segura
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return np.nan
+
+    # Manejo de NaN/inf
+    if math.isnan(x) or math.isinf(x):
+        return np.nan
+
+    # Redondeo normal
+    return int(math.ceil(x / 10.0) * 10.0)
+
 
 def now_utc_iso() -> str:
     return datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
